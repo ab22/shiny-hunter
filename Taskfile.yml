@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: "3"
+
+tasks:
+  # enumerate-devices:
+  #   desc: Enumerate all video devices
+  #   cmds:
+  #     - cargo run --bin enumerate-devices
+
+  setup:
+    cmds:
+      - task: setup-python
+
+  setup-python:
+    cmds:
+      - python3 -m venv .venv
+      - source .venv/bin/activate && pip3 install opencv-python numpy cv2-enumerate-cameras
+
+  enumerate-devices:
+    desc: Enumerate video devices
+    cmds:
+      - source .venv/bin/activate && ./scripts/enumerate_devices.py
+
+  build:
+    desc: Build all binaries
+    cmds:
+      - cargo build
+
+  run:
+    desc: Run main program
+    cmds:
+      - cargo run --bin shiny-hunter
