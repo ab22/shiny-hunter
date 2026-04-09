@@ -5,7 +5,7 @@ use clap::Parser;
 pub struct Cli {
     // Camera index from which to capture image output from.
     #[arg(short, long)]
-    pub cam_index: Option<u32>,
+    pub cam_index: Option<i32>,
 
     // Enable debug mode
     #[arg(short, long)]
