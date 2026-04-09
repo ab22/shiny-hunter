@@ -1,4 +1,5 @@
 use std::sync::{Arc, RwLock};
+use tracing::info;
 
 use clap::Parser;
 use opencv::{
@@ -10,12 +11,13 @@ use opencv::{
 mod cli;
 
 fn main() -> anyhow::Result<()> {
+    init_logger();
+
     let cli = cli::Cli::parse();
     let cam_index = cli.cam_index.unwrap_or_default();
+    let opencv_version = opencv::core::get_version_string()?;
 
-    println!("OpenCV version: {}", opencv::core::get_version_string()?);
-    println!("Capturing from {cam_index} camera index");
-
+    info!(opencv_version, cam_index, "Staring Shiny Hunter");
     // let pkmn_summary_roi = core::Rect::new();
 
     draw_debug(cam_index)?;
@@ -23,6 +25,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Default)]
 struct ROISelector {
     start_point: core::Point,
     end_point: core::Point,
@@ -30,16 +33,16 @@ struct ROISelector {
     roi: Option<core::Rect>,
 }
 
-impl ROISelector {
-    fn new() -> Self {
-        Self {
-            start_point: core::Point::new(0, 0),
-            end_point: core::Point::new(0, 0),
-            selecting: false,
-            roi: None,
-        }
-    }
-}
+// impl ROISelector {
+//     fn new() -> Self {
+//         Self {
+//             start_point: core::Point::new(0, 0),
+//             end_point: core::Point::new(0, 0),
+//             selecting: false,
+//             roi: None,
+//         }
+//     }
+// }
 
 fn draw_debug(idx: i32) -> anyhow::Result<()> {
     let mut cam = videoio::VideoCapture::new(idx, videoio::CAP_AVFOUNDATION)?;
@@ -50,41 +53,39 @@ fn draw_debug(idx: i32) -> anyhow::Result<()> {
 
     let window_name = "Shiny Hunter";
     let roi = core::Rect::new(815, 250, 890, 325);
-    let rect_color = core::Scalar::new(0.0, 255.0, 0.0, 0.0);
-    let selector = Arc::new(RwLock::new(ROISelector::new()));
+    let rect_color = core::Scalar::new(0.0, 0.0, 255.0, 0.0);
+    let selector = Arc::new(RwLock::new(ROISelector::default()));
     let ui_sel = Arc::clone(&selector);
 
     highgui::named_window(window_name, highgui::WINDOW_NORMAL)?;
     highgui::set_mouse_callback(
         window_name,
-        Some(Box::new(move |event, x, y, _flags| unsafe {
-            match event {
-                highgui::EVENT_LBUTTONDOWN => {
-                    println!("LBUTTON DOWN");
-                    let mut s = ui_sel.write().unwrap();
-                    s.selecting = true;
-                    s.start_point = core::Point::new(x, y);
+        Some(Box::new(move |event, x, y, _flags| match event {
+            highgui::EVENT_LBUTTONDOWN => {
+                println!("LBUTTON DOWN");
+                let mut s = ui_sel.write().unwrap();
+                s.selecting = true;
+                s.start_point = core::Point::new(x, y);
+                s.end_point = core::Point::new(x, y);
+            }
+            highgui::EVENT_MOUSEMOVE => {
+                let mut s = ui_sel.write().unwrap();
+                if s.selecting {
                     s.end_point = core::Point::new(x, y);
                 }
-                highgui::EVENT_MOUSEMOVE => {
-                    let mut s = ui_sel.write().unwrap();
-                    if s.selecting {
-                        s.end_point = core::Point::new(x, y);
-                    }
-                }
-                highgui::EVENT_LBUTTONUP => {
-                    println!("LBUTTON UP");
-                    let mut s = ui_sel.write().unwrap();
-                    s.selecting = false;
-                    s.roi = Some(core::Rect::new(
-                        s.start_point.x.min(x),
-                        s.start_point.y.min(y),
-                        (s.start_point.x - x).abs(),
-                        (s.start_point.y - y).abs(),
-                    ));
-                }
-                _ => {}
             }
+            highgui::EVENT_LBUTTONUP => {
+                println!("LBUTTON UP");
+                let mut s = ui_sel.write().unwrap();
+                s.selecting = false;
+                s.roi = Some(core::Rect::new(
+                    s.start_point.x.min(x),
+                    s.start_point.y.min(y),
+                    (s.start_point.x - x).abs(),
+                    (s.start_point.y - y).abs(),
+                ));
+            }
+            _ => {}
         })),
     )?;
 
@@ -125,4 +126,14 @@ fn draw_debug(idx: i32) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn init_logger() {
+    tracing_subscriber::fmt()
+        .pretty()
+        .with_thread_names(true)
+        .with_max_level(tracing::Level::INFO)
+        .with_file(true)
+        .with_line_number(true)
+        .init();
 }

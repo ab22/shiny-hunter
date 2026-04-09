@@ -14,4 +14,8 @@ pub struct Cli {
     // Show Region of Interest window
     #[arg(short, long)]
     pub show: bool,
+
+    // Trace will display a window with the captured input on which you will be able
+    // to draw a square for a customized ROI.
+    pub trace: Option<bool>,
 }
