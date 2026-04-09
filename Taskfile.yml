@@ -30,4 +30,4 @@ tasks:
   run:
     desc: Run main program
     cmds:
-      - cargo run --bin shiny-hunter
+      - cargo run --bin shiny-hunter -- {{.CLI_ARGS}}

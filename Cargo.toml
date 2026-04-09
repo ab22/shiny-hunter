@@ -3,10 +3,7 @@ name = "shiny-hunter"
 version = "0.1.0"
 edition = "2024"
 
-[[bin]]
-name = "enumerate-devices"
-path = "src/enumdev.rs"
-
 [dependencies]
 anyhow = "1.0.102"
+clap = { version = "4.6.0", features = ["derive"] }
 opencv = "0.98.2"
