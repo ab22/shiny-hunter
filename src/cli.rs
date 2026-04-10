@@ -24,6 +24,6 @@ pub struct Cli {
     pub trace: bool,
 
     // Specifies which ROI preset to use.
-    #[arg(long, default_value_t = RoiPreset::PkmnSummary)]
+    #[arg(long, default_value_t = RoiPreset::PkmnSummaryView)]
     pub roi_preset: RoiPreset,
 }
