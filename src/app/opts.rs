@@ -14,7 +14,7 @@ impl From<cli::Cli> for Opts {
             debug: value.debug,
             camera_index: value.cam_index,
             roi: value.roi_preset,
-            show: value.show,
+            show: value.show || value.trace,
             trace: value.trace,
         }
     }

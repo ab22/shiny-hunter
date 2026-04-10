@@ -82,7 +82,9 @@ impl App {
                 self.draw_trace_rect(&mut frame)?;
             }
 
-            highgui::imshow(wnd_name, &frame)?;
+            if self.opts.show {
+                highgui::imshow(wnd_name, &frame)?;
+            }
 
             let key = highgui::wait_key(1)?;
             if key == 113 || key == 27 {

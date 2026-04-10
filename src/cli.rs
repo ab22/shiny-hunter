@@ -13,7 +13,8 @@ pub struct Cli {
     #[arg(short, long)]
     pub debug: bool,
 
-    // Show Region of Interest window
+    // Create and display window with the captured output from `cam_index`. Value is set
+    // to `true` if --trace is specified.
     #[arg(short, long)]
     pub show: bool,
 
