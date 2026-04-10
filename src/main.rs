@@ -7,9 +7,9 @@ mod cli;
 mod presets;
 
 fn main() -> anyhow::Result<()> {
-    init_logger();
-
     let cli = cli::Cli::parse();
+    init_logger(cli.debug);
+
     let opts = Opts::from(cli);
     let app = App::new(opts);
 
@@ -18,11 +18,16 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn init_logger() {
+fn init_logger(debug: bool) {
+    let mut level = tracing::Level::INFO;
+    if debug {
+        level = tracing::Level::DEBUG;
+    }
+
     tracing_subscriber::fmt()
         .pretty()
         .with_thread_names(true)
-        .with_max_level(tracing::Level::INFO)
+        .with_max_level(level)
         .with_file(true)
         .with_line_number(true)
         .init();
