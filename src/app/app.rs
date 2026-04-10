@@ -62,6 +62,8 @@ impl App {
     fn draw(&self, wnd_name: &str, cam: &mut VideoCapture) -> Result<()> {
         println!("Press 'q' or Esc to quit");
 
+        let roi_preset = self.opts.roi.rect();
+
         loop {
             let mut frame = Mat::default();
             if !cam.read(&mut frame)? {
@@ -70,6 +72,7 @@ impl App {
                 anyhow::bail!("Frame was empty!");
             }
 
+            imgproc::rectangle(&mut frame, roi_preset, color::RED, 3, imgproc::LINE_8, 0)?;
             if self.opts.trace {
                 self.draw_trace_rect(&mut frame)?;
             }
@@ -136,13 +139,22 @@ impl App {
                 }
                 highgui::EVENT_LBUTTONUP => {
                     let mut s = state.write().unwrap();
-                    s.selecting = false;
-                    s.selected_roi = Some(Rect::new(
+                    let r = Rect::new(
                         s.start_point.x.min(x),
                         s.start_point.y.min(y),
                         (s.start_point.x - x).abs(),
                         (s.start_point.y - y).abs(),
-                    ));
+                    );
+
+                    info!(
+                        x1 = r.x,
+                        y2 = r.y,
+                        x2 = r.width,
+                        y2 = r.height,
+                        "New Selected Rectangle"
+                    );
+                    s.selecting = false;
+                    s.selected_roi = Some(r);
                 }
                 _ => {}
             })),

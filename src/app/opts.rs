@@ -12,8 +12,8 @@ impl From<cli::Cli> for Opts {
     fn from(value: cli::Cli) -> Self {
         Self {
             debug: value.debug,
-            camera_index: value.cam_index.unwrap_or_default(),
-            roi: value.roi_preset.unwrap_or(RoiPreset::PkmnSummary),
+            camera_index: value.cam_index,
+            roi: value.roi_preset,
             show: value.show,
             trace: value.trace,
         }

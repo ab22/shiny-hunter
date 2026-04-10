@@ -6,10 +6,10 @@ use crate::presets::RoiPreset;
 #[command(version, about, long_about = None)]
 pub struct Cli {
     // Camera index from which to capture image output from.
-    #[arg(short, long)]
-    pub cam_index: Option<i32>,
+    #[arg(short, long, default_value_t = 1)]
+    pub cam_index: i32,
 
-    // Enable debug mode
+    // Enable debug logs.
     #[arg(short, long)]
     pub debug: bool,
 
@@ -22,7 +22,7 @@ pub struct Cli {
     #[arg(long)]
     pub trace: bool,
 
-    // Specifies which ROI preset to use. Defaults to `PkmnSummary`.
-    #[arg(long)]
-    pub roi_preset: Option<RoiPreset>,
+    // Specifies which ROI preset to use.
+    #[arg(long, default_value_t = RoiPreset::PkmnSummary)]
+    pub roi_preset: RoiPreset,
 }
