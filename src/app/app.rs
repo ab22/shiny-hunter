@@ -2,7 +2,7 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
 use opencv::{
-    core::{Mat, MatTraitConst, Point, Rect, ToInputOutputArray},
+    core::{Mat, MatTraitConst, Point, Rect, Scalar, ToInputOutputArray},
     highgui, imgproc,
     videoio::{self, VideoCapture, VideoCaptureTrait, VideoCaptureTraitConst},
 };
@@ -72,12 +72,18 @@ impl App {
                 anyhow::bail!("Frame was empty!");
             }
 
+            if self.roi_has_color(&mut frame, roi_preset)? {
+                info!("SHINY ENCOUNTER!");
+            }
+
+            // Draw red rectangles after all checks to avoid issues.
             imgproc::rectangle(&mut frame, roi_preset, color::RED, 3, imgproc::LINE_8, 0)?;
             if self.opts.trace {
                 self.draw_trace_rect(&mut frame)?;
             }
 
             highgui::imshow(wnd_name, &frame)?;
+
             let key = highgui::wait_key(1)?;
             if key == 113 || key == 27 {
                 break;
@@ -161,5 +167,55 @@ impl App {
         )?;
 
         Ok(())
+    }
+
+    fn roi_has_color(&self, frame: &impl MatTraitConst, roi: Rect) -> Result<bool> {
+        let roi_image = Mat::roi(frame, roi)?;
+        let target_color = Scalar::new(229.0, 244.0, 119.0, 0.0);
+        let tolerance = 1.0;
+        let lower_bound = Scalar::new(
+            (target_color[0] - tolerance).max(0.0),
+            (target_color[1] - tolerance).max(0.0),
+            (target_color[2] - tolerance).max(0.0),
+            0.0,
+        );
+        let upper_bound = Scalar::new(
+            (target_color[0] - tolerance).max(255.0),
+            (target_color[1] - tolerance).max(255.0),
+            (target_color[2] - tolerance).max(255.0),
+            0.0,
+        );
+
+        let mut mask = Mat::default();
+        opencv::core::in_range(&roi_image, &lower_bound, &upper_bound, &mut mask)?;
+
+        let matching_pixels = opencv::core::count_non_zero(&mask)?;
+
+        if self.opts.debug {
+            let mut average_color = Mat::default();
+            let mut roi_f32 = Mat::default();
+            roi_image.convert_to(&mut roi_f32, opencv::core::CV_32FC3, 1.0, 0.0)?;
+            opencv::core::reduce(
+                &roi_f32,
+                &mut average_color,
+                0,
+                opencv::core::REDUCE_AVG,
+                -1,
+            )?;
+
+            let avg_pixel = average_color.at_2d::<opencv::core::Vec3f>(0, 0)?;
+            let avg_b = avg_pixel[0];
+            let avg_g = avg_pixel[1];
+            let avg_r = avg_pixel[2];
+            info!(
+                "{}",
+                format!(
+                    "ROI Average Color: B: {:.1}, G: {:.1}, R: {:.1}",
+                    avg_b, avg_g, avg_r,
+                )
+            );
+        }
+
+        Ok(matching_pixels > 0)
     }
 }
