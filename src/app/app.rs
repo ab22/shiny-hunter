@@ -6,7 +6,7 @@ use opencv::{
     highgui, imgproc,
     videoio::{self, VideoCapture, VideoCaptureTrait, VideoCaptureTraitConst},
 };
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::app::{Opts, State, color};
 
@@ -63,6 +63,7 @@ impl App {
         println!("Press 'q' or Esc to quit");
 
         let roi_preset = self.opts.roi.rect();
+        let target_color = self.opts.roi.target_color();
 
         loop {
             let mut frame = Mat::default();
@@ -72,7 +73,7 @@ impl App {
                 anyhow::bail!("Frame was empty!");
             }
 
-            if self.roi_has_color(&mut frame, roi_preset)? {
+            if self.roi_has_color(&mut frame, roi_preset, target_color)? {
                 info!("SHINY ENCOUNTER!");
             }
 
@@ -171,9 +172,13 @@ impl App {
         Ok(())
     }
 
-    fn roi_has_color(&self, frame: &impl MatTraitConst, roi: Rect) -> Result<bool> {
+    fn roi_has_color(
+        &self,
+        frame: &impl MatTraitConst,
+        roi: Rect,
+        target_color: Scalar,
+    ) -> Result<bool> {
         let roi_image = Mat::roi(frame, roi)?;
-        let target_color = Scalar::new(229.0, 244.0, 119.0, 0.0);
         let tolerance = 1.0;
         let lower_bound = Scalar::new(
             (target_color[0] - tolerance).max(0.0),

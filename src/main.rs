@@ -4,7 +4,6 @@ use crate::app::{App, Opts};
 
 mod app;
 mod cli;
-mod presets;
 
 fn main() -> anyhow::Result<()> {
     let cli = cli::Cli::parse();

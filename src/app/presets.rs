@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use clap::ValueEnum;
-use opencv::core::Rect;
+use opencv::core::{Rect, Scalar};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 #[value(rename_all = "kebab-case")]
@@ -20,6 +20,13 @@ impl RoiPreset {
         };
 
         rect
+    }
+
+    pub fn target_color(&self) -> Scalar {
+        match self {
+            RoiPreset::PkmnSummary => Scalar::new(229.0, 244.0, 119.0, 0.0),
+            RoiPreset::TestImage => Scalar::new(229.0, 244.0, 119.0, 0.0),
+        }
     }
 }
 

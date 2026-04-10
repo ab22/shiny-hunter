@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use crate::presets::RoiPreset;
+use crate::app::presets::RoiPreset;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
