@@ -1,5 +1,6 @@
 LLVM_PREFIX="$(brew --prefix llvm)"
 PATH_prepend "$LLVM_PREFIX/bin"
+
 export LDFLAGS="-L${LLVM_PREFIX}/lib"
 export CPPFLAGS="-I${LLVM_PREFIX}/include"
 export LD_LIBRARY_PATH="/opt/homebrew/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"

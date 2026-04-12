@@ -1,7 +1,6 @@
-use std::fmt::Display;
-
 use clap::ValueEnum;
 use opencv::core::{Rect, Scalar};
+use std::fmt::Display;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 #[value(rename_all = "kebab-case")]

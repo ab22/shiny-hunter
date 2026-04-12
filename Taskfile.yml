@@ -30,4 +30,4 @@ tasks:
   run:
     desc: Run main program
     cmds:
-      - RUST_BACKTRACE=1 cargo run --bin shiny-hunter -- {{.CLI_ARGS}}
+      - cargo run --bin shiny-hunter -- {{.CLI_ARGS}}
