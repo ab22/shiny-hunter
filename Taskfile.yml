@@ -36,3 +36,7 @@ tasks:
     desc: Run main program
     cmds:
       - cargo run -p shiny-watch -- {{.CLI_ARGS}}
+
+  run-broadcast-listener:
+    cmds:
+      - cargo run -p broadcast-listener

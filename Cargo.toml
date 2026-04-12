@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/broadcast-listener",
     "crates/shiny-watch"
 ]
 resolver = "3"
