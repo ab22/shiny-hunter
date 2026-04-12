@@ -22,10 +22,15 @@ tasks:
     cmds:
       - source .venv/bin/activate && ./scripts/enumerate_devices.py
 
-  build:
+  build-debug:
     desc: Build all binaries
     cmds:
       - cargo build
+
+  build:
+    desc: Build all binaries
+    cmds:
+      - cargo build --release
 
   run:
     desc: Run main program

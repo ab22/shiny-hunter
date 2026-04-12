@@ -1,11 +1,30 @@
-[package]
-name = "shiny-hunter"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [
+    "crates/shiny-watch"
+]
+resolver = "3"
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.6.0", features = ["derive"] }
 opencv = "0.98.2"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
+
+[profile.release]
+# opt-level tells the compiler to optimize for binary size
+opt-level = "s"
+# lto stands for "link-time optimization", and setting it to true (same as setting it
+# to fat) enables optimizing for binary size across all of the crates in the project's
+# dependency graph, at the cost of compile time.
+lto = true
+# controls the number of parallel jobs used to compile crates, which speeds up
+# compilation but means we may miss out on some optimizations. Setting it to 1 means
+# we'll get the best possible optimizations, again at the cost of compile time.
+codegen-units = 1
+#  is useful if you don't need to clean up any resource after a panic (which can be
+# done in a catch_unwind): it will skip the unwinding phase entirely.
+panic = "unwind"
+# will strip the debug symbols from the binary, which will reduce its size. You can
+# also set this to symbols, but the gains aren't nearly as dramatic.
+strip = "debuginfo"
