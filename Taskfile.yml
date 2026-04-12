@@ -35,4 +35,4 @@ tasks:
   run:
     desc: Run main program
     cmds:
-      - cargo run --bin shiny-hunter -- {{.CLI_ARGS}}
+      - cargo run -p shiny-watch -- {{.CLI_ARGS}}
