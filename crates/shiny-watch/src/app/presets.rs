@@ -1,6 +1,11 @@
 use clap::ValueEnum;
-use opencv::core::{Rect, Scalar};
+use opencv::core::{Point, Rect, Scalar};
 use std::fmt::Display;
+
+pub struct RegionOfInterest {
+    pub point: Point,
+    pub target_color: Scalar,
+}
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 #[value(rename_all = "kebab-case")]
@@ -12,19 +17,17 @@ pub enum RoiPreset {
 }
 
 impl RoiPreset {
-    pub fn rect(&self) -> Rect {
-        let rect = match self {
-            RoiPreset::PkmnSummaryView => Rect::new(262, 111, 23, 15),
-            RoiPreset::TestImage => Rect::new(262, 111, 23, 15),
-        };
-
-        rect
-    }
-
-    pub fn target_color(&self) -> Scalar {
+    pub fn get(&self) -> RegionOfInterest {
         match self {
-            RoiPreset::PkmnSummaryView => Scalar::new(231.0, 231.0, 107.0, 0.0),
-            RoiPreset::TestImage => Scalar::new(229.0, 244.0, 119.0, 0.0),
+            RoiPreset::PkmnSummaryView => RegionOfInterest {
+                point: Point::new(265, 109),
+                target_color: Scalar::new(231.0, 231.0, 107.0, 0.0),
+            },
+
+            RoiPreset::TestImage => RegionOfInterest {
+                point: Point::new(262, 111),
+                target_color: Scalar::new(229.0, 244.0, 119.0, 0.0),
+            },
         }
     }
 }
