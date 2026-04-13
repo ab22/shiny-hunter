@@ -2,7 +2,7 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
 use opencv::{
-    core::{Mat, MatTraitConst, Point, Rect, Scalar, ToInputOutputArray, Vec3b},
+    core::{Mat, MatTraitConst, Point, ToInputOutputArray, Vec3b},
     highgui, imgproc,
     videoio::{self, VideoCapture, VideoCaptureTrait, VideoCaptureTraitConst},
 };
