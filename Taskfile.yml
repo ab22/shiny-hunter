@@ -10,9 +10,9 @@ tasks:
 
   setup:
     cmds:
-      - task: setup-python
+      - task: setup-venv
 
-  setup-python:
+  setup-venv:
     cmds:
       - python3 -m venv .venv
       - source .venv/bin/activate && pip3 install opencv-python numpy cv2-enumerate-cameras
