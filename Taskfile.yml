@@ -40,3 +40,7 @@ tasks:
   run-broadcast-listener:
     cmds:
       - cargo run -p broadcast-listener
+
+  run-pico-timer:
+    cmds:
+      - cargo run -p pico-timer --target thumbv6m-none-eabi
