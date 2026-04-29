@@ -44,3 +44,7 @@ tasks:
   run-pico-timer:
     cmds:
       - cargo run -p pico-timer --target thumbv6m-none-eabi
+
+  build-pico-timer:
+    cmds:
+      - cargo build -p pico-timer --target thumbv6m-none-eabi
