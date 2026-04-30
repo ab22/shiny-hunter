@@ -9,23 +9,78 @@ use embassy_executor::Spawner;
 use embassy_net::{Config, Stack, StackResources};
 use embassy_rp::clocks::RoscRng;
 use embassy_rp::gpio::{Level, Output};
-use embassy_rp::peripherals::{DMA_CH0, PIO0};
+use embassy_rp::peripherals::{DMA_CH0, PIO0, USB};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::{bind_interrupts, dma};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
+use embassy_time::{Duration, Timer};
+use embassy_usb::class::hid::{Config as HidConfig, HidBootProtocol, HidSubclass, HidWriter, State as HidState};
+use embassy_usb::{Builder as UsbBuilder, Config as UsbConfig};
 use picoserve::routing::get;
 use picoserve::{AppBuilder, AppRouter};
 use static_cell::StaticCell;
+use usbd_hid::descriptor::SerializedDescriptor;
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
     DMA_IRQ_0 => dma::InterruptHandler<DMA_CH0>;
+    USBCTRL_IRQ => embassy_rp::usb::InterruptHandler<USB>;
 });
 
 const WIFI_NETWORK: &str = "Fam. Alvarado 2F";
 const WIFI_PASSWORD: &str = "Xchgeax,eax";
 
 const WEB_TASK_POOL_SIZE: usize = 4;
+
+// ---------- USB HID ----------
+
+type UsbDriver = embassy_rp::usb::Driver<'static, USB>;
+
+// To switch to Nintendo Switch HID in the future: replace KeyboardReport::desc()
+// with the Switch gamepad descriptor and update hid_task to send switch_report_t
+// format: [buttons_lo, buttons_hi, hat, x, y, z, rz, vendor].
+enum KeyEvent {
+    Tap,
+    Hold(u64), // milliseconds
+}
+
+static KEY_CHANNEL: Channel<CriticalSectionRawMutex, KeyEvent, 4> = Channel::new();
+
+static USB_STATE: StaticCell<HidState<'static>> = StaticCell::new();
+static USB_CONFIG_DESC: StaticCell<[u8; 256]> = StaticCell::new();
+static USB_BOS_DESC: StaticCell<[u8; 256]> = StaticCell::new();
+static USB_CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
+
+#[embassy_executor::task]
+async fn usb_task(mut usb: embassy_usb::UsbDevice<'static, UsbDriver>) -> ! {
+    usb.run().await
+}
+
+#[embassy_executor::task]
+async fn hid_task(mut writer: HidWriter<'static, UsbDriver, 8>) -> ! {
+    loop {
+        let event = KEY_CHANNEL.receive().await;
+
+        // Block until the USB host has enumerated the device.
+        writer.ready().await;
+
+        // Keyboard report: [modifier, reserved, kc1..kc6]. 'A' = keycode 0x04.
+        let _ = writer.write(&[0x00, 0x00, 0x04, 0, 0, 0, 0, 0]).await;
+
+        Timer::after(Duration::from_millis(match event {
+            KeyEvent::Tap => 50,
+            KeyEvent::Hold(ms) => ms,
+        }))
+        .await;
+
+        // Release all keys.
+        let _ = writer.write(&[0u8; 8]).await;
+    }
+}
+
+// ---------- WiFi / HTTP ----------
 
 #[embassy_executor::task]
 async fn cyw43_task(
@@ -45,14 +100,26 @@ impl AppBuilder for App {
     type PathRouter = impl picoserve::routing::PathRouter;
 
     fn build_app(self) -> picoserve::Router<Self::PathRouter> {
-        picoserve::Router::new().route("/", get(|| async { "Hello, World!" }))
+        picoserve::Router::new()
+            .route("/", get(|| async {
+                KEY_CHANNEL.send(KeyEvent::Tap).await;
+                "OK"
+            }))
+            .route("/hold", get(|| async {
+                KEY_CHANNEL.send(KeyEvent::Hold(2000)).await;
+                "OK"
+            }))
     }
 }
 
 static APP_CONFIG: picoserve::Config = picoserve::Config::const_default().keep_connection_alive();
 
 #[embassy_executor::task(pool_size = WEB_TASK_POOL_SIZE)]
-async fn web_task(task_id: usize, stack: Stack<'static>, app: &'static AppRouter<App>) -> ! {
+async fn web_task(
+    task_id: usize,
+    stack: Stack<'static>,
+    app: &'static AppRouter<App>,
+) -> ! {
     let mut tcp_rx_buffer = [0; 1024];
     let mut tcp_tx_buffer = [0; 1024];
     let mut http_buffer = [0; 2048];
@@ -68,6 +135,45 @@ async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
     let mut rng = RoscRng;
 
+    // ---------- USB HID setup ----------
+    let usb_driver = embassy_rp::usb::Driver::new(p.USB, Irqs);
+
+    let mut usb_config = UsbConfig::new(0xc0de, 0xcafe);
+    usb_config.manufacturer = Some("Shiny Hunter");
+    usb_config.product = Some("Controller");
+    usb_config.serial_number = Some("1");
+    usb_config.max_power = 100;
+    usb_config.max_packet_size_0 = 64;
+
+    let mut builder = UsbBuilder::new(
+        usb_driver,
+        usb_config,
+        USB_CONFIG_DESC.init([0; 256]),
+        USB_BOS_DESC.init([0; 256]),
+        &mut [],
+        USB_CONTROL_BUF.init([0; 64]),
+    );
+
+    let hid_config = HidConfig {
+        report_descriptor: usbd_hid::descriptor::KeyboardReport::desc(),
+        request_handler: None,
+        poll_ms: 10,
+        max_packet_size: 64,
+        hid_subclass: HidSubclass::Boot,
+        hid_boot_protocol: HidBootProtocol::Keyboard,
+    };
+
+    let hid_writer = HidWriter::<_, 8>::new(
+        &mut builder,
+        USB_STATE.init(HidState::new()),
+        hid_config,
+    );
+
+    let usb = builder.build();
+    spawner.spawn(unwrap!(usb_task(usb)));
+    spawner.spawn(unwrap!(hid_task(hid_writer)));
+
+    // ---------- CYW43 / WiFi setup ----------
     let fw = aligned_bytes!("../firmware/cyw43/43439A0.bin");
     let clm = aligned_bytes!("../firmware/cyw43/43439A0_clm.bin");
     let nvram = aligned_bytes!("../firmware/cyw43/nvram_rp2040.bin");
@@ -92,18 +198,16 @@ async fn main(spawner: Spawner) {
     spawner.spawn(unwrap!(cyw43_task(runner)));
 
     control.init(clm).await;
+    // PowerSave lets the chip sleep between transmissions — bad for a server that
+    // must respond promptly. Use None (always-on) for reliable HTTP serving.
     control
-        .set_power_management(cyw43::PowerManagementMode::PowerSave)
+        .set_power_management(cyw43::PowerManagementMode::None)
         .await;
 
     let config = Config::dhcpv4(Default::default());
     let seed = rng.next_u64();
 
-    // StackResources<5>` only allocates 5 socket slots total. Embassy-net internally
-    // claims 2 of them at startup — 1 for the DNS socket and 1 for the DHCP socket —
-    // leaving only 3 free for TCP. But 4 web tasks each try to create a `TcpSocket`,
-    // so the 4th one calls into smoltcp which hard-panics with "adding a socket to a
-    // full SocketSet". That panic was the cause of the LED staying on permanently.
+    // StackResources: 2 internal (DNS + DHCP) + WEB_TASK_POOL_SIZE TCP sockets.
     static RESOURCES: StaticCell<StackResources<{ WEB_TASK_POOL_SIZE + 2 }>> = StaticCell::new();
     let (stack, runner) = embassy_net::new(
         net_device,
@@ -123,7 +227,10 @@ async fn main(spawner: Spawner) {
             .await
         {
             Ok(_) => break,
-            Err(err) => info!("join failed: {:?}", err),
+            Err(err) => {
+                info!("join failed: {:?}", err);
+                Timer::after(Duration::from_secs(1)).await;
+            }
         }
     }
 
@@ -144,16 +251,16 @@ async fn main(spawner: Spawner) {
     }
 
     loop {
-        embassy_time::Timer::after(embassy_time::Duration::from_secs(3600)).await;
+        Timer::after(Duration::from_secs(3600)).await;
     }
 }
 
 async fn blink(control: &mut cyw43::Control<'_>, times: u32) {
     for _ in 0..times {
         control.gpio_set(0, true).await;
-        embassy_time::Timer::after(embassy_time::Duration::from_millis(400)).await;
+        Timer::after(Duration::from_millis(400)).await;
         control.gpio_set(0, false).await;
-        embassy_time::Timer::after(embassy_time::Duration::from_millis(400)).await;
+        Timer::after(Duration::from_millis(400)).await;
     }
-    embassy_time::Timer::after(embassy_time::Duration::from_millis(800)).await;
+    Timer::after(Duration::from_millis(800)).await;
 }
