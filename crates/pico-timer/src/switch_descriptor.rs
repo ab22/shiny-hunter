@@ -104,6 +104,7 @@ pub enum SwitchButton {
     BtnCap   = 1 << 13,
 }
 
+#[derive(Copy, Clone)]
 #[repr(u8)]
 pub enum SwitchHatValues {
     Up      = 0x00,

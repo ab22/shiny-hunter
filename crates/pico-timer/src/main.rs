@@ -2,7 +2,7 @@
 #![no_main]
 #![feature(impl_trait_in_assoc_type)]
 
-use crate::switch_descriptor::{SwitchButton, SwitchGamepadDescriptor};
+use crate::switch_descriptor::{SwitchButton, SwitchGamepadDescriptor, SwitchHatValues};
 use cyw43::{JoinOptions, aligned_bytes};
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use defmt::*;
@@ -44,7 +44,8 @@ type UsbDriver = embassy_rp::usb::Driver<'static, USB>;
 
 enum KeyEvent {
     Tap(SwitchButton),
-    Hold(SwitchButton, u64), // button, milliseconds
+    Hold(SwitchButton, u64),  // button, milliseconds
+    DPad(SwitchHatValues, u64), // direction, milliseconds
 }
 
 static KEY_CHANNEL: Channel<CriticalSectionRawMutex, KeyEvent, 4> = Channel::new();
@@ -73,19 +74,35 @@ async fn hid_task(mut writer: HidWriter<'static, UsbDriver, 8>) -> ! {
         handshake.buttons = SwitchButton::BtnL as u16 | SwitchButton::BtnR as u16;
         let _ = writer.write(handshake.as_bytes()).await;
         Timer::after(Duration::from_millis(120)).await;
-        let _ = writer.write(SwitchGamepadDescriptor::neutral().as_bytes()).await;
+        let _ = writer
+            .write(SwitchGamepadDescriptor::neutral().as_bytes())
+            .await;
 
         // The Switch drops the controller if it stops receiving reports.
         // Send the current state every 8 ms, exactly like the C firmware's 5 ms loop.
         let mut report = SwitchGamepadDescriptor::neutral();
         loop {
-            match select(KEY_CHANNEL.receive(), Timer::after(Duration::from_millis(8))).await {
+            match select(
+                KEY_CHANNEL.receive(),
+                Timer::after(Duration::from_millis(8)),
+            )
+            .await
+            {
                 Either::First(event) => {
-                    let (button, hold_ms) = match event {
-                        KeyEvent::Tap(btn) => (btn, 50u64),
-                        KeyEvent::Hold(btn, ms) => (btn, ms),
+                    let hold_ms = match event {
+                        KeyEvent::Tap(btn) => {
+                            report.buttons = btn as u16;
+                            50u64
+                        }
+                        KeyEvent::Hold(btn, ms) => {
+                            report.buttons = btn as u16;
+                            ms
+                        }
+                        KeyEvent::DPad(dir, ms) => {
+                            report.hat = dir as u8;
+                            ms
+                        }
                     };
-                    report.buttons = button as u16;
                     // Send pressed reports at 8 ms intervals for the full hold duration.
                     let steps = (hold_ms / 8).max(1);
                     for _ in 0..steps {
@@ -142,6 +159,42 @@ impl AppBuilder for App {
                 get(|| async {
                     KEY_CHANNEL
                         .send(KeyEvent::Hold(SwitchButton::BtnA, 2000))
+                        .await;
+                    "OK"
+                }),
+            )
+            .route(
+                "/dpad/up",
+                get(|| async {
+                    KEY_CHANNEL
+                        .send(KeyEvent::DPad(SwitchHatValues::Up, 2000))
+                        .await;
+                    "OK"
+                }),
+            )
+            .route(
+                "/dpad/down",
+                get(|| async {
+                    KEY_CHANNEL
+                        .send(KeyEvent::DPad(SwitchHatValues::Down, 2000))
+                        .await;
+                    "OK"
+                }),
+            )
+            .route(
+                "/dpad/left",
+                get(|| async {
+                    KEY_CHANNEL
+                        .send(KeyEvent::DPad(SwitchHatValues::Left, 2000))
+                        .await;
+                    "OK"
+                }),
+            )
+            .route(
+                "/dpad/right",
+                get(|| async {
+                    KEY_CHANNEL
+                        .send(KeyEvent::DPad(SwitchHatValues::Right, 2000))
                         .await;
                     "OK"
                 }),
