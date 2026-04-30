@@ -1,19 +1,19 @@
 #![no_std]
 #![no_main]
+#![feature(impl_trait_in_assoc_type)]
 
 use cyw43::{JoinOptions, aligned_bytes};
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use defmt::*;
 use embassy_executor::Spawner;
-use embassy_net::tcp::TcpSocket;
-use embassy_net::{Config, StackResources};
+use embassy_net::{Config, Stack, StackResources};
 use embassy_rp::clocks::RoscRng;
 use embassy_rp::gpio::{Level, Output};
 use embassy_rp::peripherals::{DMA_CH0, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::{bind_interrupts, dma};
-use embassy_time::Duration;
-use embedded_io_async::Write;
+use picoserve::routing::get;
+use picoserve::{AppBuilder, AppRouter};
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -25,6 +25,8 @@ bind_interrupts!(struct Irqs {
 const WIFI_NETWORK: &str = "Fam. Alvarado 2F";
 const WIFI_PASSWORD: &str = "Xchgeax,eax";
 
+const WEB_TASK_POOL_SIZE: usize = 4;
+
 #[embassy_executor::task]
 async fn cyw43_task(
     runner: cyw43::Runner<'static, cyw43::SpiBus<Output<'static>, PioSpi<'static, PIO0, 0>>>,
@@ -35,6 +37,30 @@ async fn cyw43_task(
 #[embassy_executor::task]
 async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'static>>) -> ! {
     runner.run().await
+}
+
+struct App;
+
+impl AppBuilder for App {
+    type PathRouter = impl picoserve::routing::PathRouter;
+
+    fn build_app(self) -> picoserve::Router<Self::PathRouter> {
+        picoserve::Router::new().route("/", get(|| async { "Hello, World!" }))
+    }
+}
+
+static APP_CONFIG: picoserve::Config = picoserve::Config::const_default().keep_connection_alive();
+
+#[embassy_executor::task(pool_size = WEB_TASK_POOL_SIZE)]
+async fn web_task(task_id: usize, stack: Stack<'static>, app: &'static AppRouter<App>) -> ! {
+    let mut tcp_rx_buffer = [0; 1024];
+    let mut tcp_tx_buffer = [0; 1024];
+    let mut http_buffer = [0; 2048];
+
+    picoserve::Server::new(app, &APP_CONFIG, &mut http_buffer)
+        .listen_and_serve(task_id, stack, 80, &mut tcp_rx_buffer, &mut tcp_tx_buffer)
+        .await
+        .into_never()
 }
 
 #[embassy_executor::main]
@@ -73,7 +99,12 @@ async fn main(spawner: Spawner) {
     let config = Config::dhcpv4(Default::default());
     let seed = rng.next_u64();
 
-    static RESOURCES: StaticCell<StackResources<5>> = StaticCell::new();
+    // StackResources<5>` only allocates 5 socket slots total. Embassy-net internally
+    // claims 2 of them at startup — 1 for the DNS socket and 1 for the DHCP socket —
+    // leaving only 3 free for TCP. But 4 web tasks each try to create a `TcpSocket`,
+    // so the 4th one calls into smoltcp which hard-panics with "adding a socket to a
+    // full SocketSet". That panic was the cause of the LED staying on permanently.
+    static RESOURCES: StaticCell<StackResources<{ WEB_TASK_POOL_SIZE + 2 }>> = StaticCell::new();
     let (stack, runner) = embassy_net::new(
         net_device,
         config,
@@ -82,6 +113,9 @@ async fn main(spawner: Spawner) {
     );
 
     spawner.spawn(unwrap!(net_task(runner)));
+
+    // Checkpoint 1: CYW43 init done — 1 slow blink
+    blink(&mut control, 1).await;
 
     loop {
         match control
@@ -93,43 +127,33 @@ async fn main(spawner: Spawner) {
         }
     }
 
+    // Checkpoint 2: WiFi joined — 2 slow blinks
+    blink(&mut control, 2).await;
+
     stack.wait_link_up().await;
     stack.wait_config_up().await;
 
-    // 3 quick blinks = connected and serving
-    for _ in 0..3 {
-        control.gpio_set(0, true).await;
-        embassy_time::Timer::after(Duration::from_millis(200)).await;
-        control.gpio_set(0, false).await;
-        embassy_time::Timer::after(Duration::from_millis(200)).await;
+    // Checkpoint 3: DHCP up — 3 slow blinks
+    blink(&mut control, 3).await;
+
+    static APP: StaticCell<AppRouter<App>> = StaticCell::new();
+    let app = APP.init(App.build_app());
+
+    for task_id in 0..WEB_TASK_POOL_SIZE {
+        spawner.spawn(unwrap!(web_task(task_id, stack, app)));
     }
 
     loop {
-        let mut rx_buffer = [0; 1024];
-        let mut tx_buffer = [0; 1024];
-        let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-        socket.set_timeout(Some(Duration::from_secs(10)));
-
-        if socket.accept(80).await.is_err() {
-            continue;
-        }
-
-        // Read until end of HTTP headers
-        let mut buf = [0; 1024];
-        loop {
-            match socket.read(&mut buf).await {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    if buf[..n].windows(4).any(|w| w == b"\r\n\r\n") {
-                        break;
-                    }
-                }
-            }
-        }
-
-        const RESPONSE: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\nConnection: close\r\n\r\nHello, World!";
-        let _ = socket.write_all(RESPONSE).await;
-        let _ = socket.flush().await;
-        socket.close();
+        embassy_time::Timer::after(embassy_time::Duration::from_secs(3600)).await;
     }
+}
+
+async fn blink(control: &mut cyw43::Control<'_>, times: u32) {
+    for _ in 0..times {
+        control.gpio_set(0, true).await;
+        embassy_time::Timer::after(embassy_time::Duration::from_millis(400)).await;
+        control.gpio_set(0, false).await;
+        embassy_time::Timer::after(embassy_time::Duration::from_millis(400)).await;
+    }
+    embassy_time::Timer::after(embassy_time::Duration::from_millis(800)).await;
 }

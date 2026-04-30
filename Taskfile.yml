@@ -42,9 +42,11 @@ tasks:
       - cargo run -p broadcast-listener
 
   run-pico-timer:
+    dir: crates/pico-timer
     cmds:
-      - cargo run -p pico-timer --target thumbv6m-none-eabi
+      - cargo run
 
   build-pico-timer:
+    dir: crates/pico-timer
     cmds:
-      - cargo build -p pico-timer --target thumbv6m-none-eabi
+      - cargo build

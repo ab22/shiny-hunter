@@ -2,5 +2,5 @@
 target = "thumbv6m-none-eabi"
 
 [target.thumbv6m-none-eabi]
-runner = "probe-rs run --chip RP2040"
-# runner = "elf2uf2-rs -d"  # USB UF2 flashing (no debug output)
+# runner = "probe-rs run --chip RP2040"
+runner = "elf2uf2-rs -d"  # USB UF2 flashing (no debug output)
