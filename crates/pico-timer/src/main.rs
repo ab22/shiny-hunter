@@ -2,6 +2,7 @@
 #![no_main]
 #![feature(impl_trait_in_assoc_type)]
 
+use crate::switch_descriptor::{SwitchButton, SwitchGamepadDescriptor};
 use cyw43::{JoinOptions, aligned_bytes};
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use defmt::*;
@@ -15,13 +16,16 @@ use embassy_rp::{bind_interrupts, dma};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
-use embassy_usb::class::hid::{Config as HidConfig, HidBootProtocol, HidSubclass, HidWriter, State as HidState};
+use embassy_usb::class::hid::{
+    Config as HidConfig, HidBootProtocol, HidSubclass, HidWriter, State as HidState,
+};
 use embassy_usb::{Builder as UsbBuilder, Config as UsbConfig};
 use picoserve::routing::get;
 use picoserve::{AppBuilder, AppRouter};
 use static_cell::StaticCell;
-use usbd_hid::descriptor::SerializedDescriptor;
 use {defmt_rtt as _, panic_probe as _};
+
+mod switch_descriptor;
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
@@ -38,12 +42,9 @@ const WEB_TASK_POOL_SIZE: usize = 4;
 
 type UsbDriver = embassy_rp::usb::Driver<'static, USB>;
 
-// To switch to Nintendo Switch HID in the future: replace KeyboardReport::desc()
-// with the Switch gamepad descriptor and update hid_task to send switch_report_t
-// format: [buttons_lo, buttons_hi, hat, x, y, z, rz, vendor].
 enum KeyEvent {
-    Tap,
-    Hold(u64), // milliseconds
+    Tap(SwitchButton),
+    Hold(SwitchButton, u64), // button, milliseconds
 }
 
 static KEY_CHANNEL: Channel<CriticalSectionRawMutex, KeyEvent, 4> = Channel::new();
@@ -60,23 +61,51 @@ async fn usb_task(mut usb: embassy_usb::UsbDevice<'static, UsbDriver>) -> ! {
 
 #[embassy_executor::task]
 async fn hid_task(mut writer: HidWriter<'static, UsbDriver, 8>) -> ! {
-    loop {
-        let event = KEY_CHANNEL.receive().await;
+    use embassy_futures::select::{Either, select};
 
-        // Block until the USB host has enumerated the device.
+    loop {
+        // Wait for USB host to enumerate the device.
         writer.ready().await;
 
-        // Keyboard report: [modifier, reserved, kc1..kc6]. 'A' = keycode 0x04.
-        let _ = writer.write(&[0x00, 0x00, 0x04, 0, 0, 0, 0, 0]).await;
+        // L+R handshake — same as tud_mount_cb in the C firmware.
+        // The Switch uses this to transition from the controller-select screen.
+        let mut handshake = SwitchGamepadDescriptor::neutral();
+        handshake.buttons = SwitchButton::BtnL as u16 | SwitchButton::BtnR as u16;
+        let _ = writer.write(handshake.as_bytes()).await;
+        Timer::after(Duration::from_millis(120)).await;
+        let _ = writer.write(SwitchGamepadDescriptor::neutral().as_bytes()).await;
 
-        Timer::after(Duration::from_millis(match event {
-            KeyEvent::Tap => 50,
-            KeyEvent::Hold(ms) => ms,
-        }))
-        .await;
-
-        // Release all keys.
-        let _ = writer.write(&[0u8; 8]).await;
+        // The Switch drops the controller if it stops receiving reports.
+        // Send the current state every 8 ms, exactly like the C firmware's 5 ms loop.
+        let mut report = SwitchGamepadDescriptor::neutral();
+        loop {
+            match select(KEY_CHANNEL.receive(), Timer::after(Duration::from_millis(8))).await {
+                Either::First(event) => {
+                    let (button, hold_ms) = match event {
+                        KeyEvent::Tap(btn) => (btn, 50u64),
+                        KeyEvent::Hold(btn, ms) => (btn, ms),
+                    };
+                    report.buttons = button as u16;
+                    // Send pressed reports at 8 ms intervals for the full hold duration.
+                    let steps = (hold_ms / 8).max(1);
+                    for _ in 0..steps {
+                        if writer.write(report.as_bytes()).await.is_err() {
+                            break;
+                        }
+                        Timer::after(Duration::from_millis(8)).await;
+                    }
+                    report = SwitchGamepadDescriptor::neutral();
+                    let _ = writer.write(report.as_bytes()).await;
+                }
+                Either::Second(_) => {
+                    // Keep-alive tick — send current state.
+                    if writer.write(report.as_bytes()).await.is_err() {
+                        // USB disconnected; break to outer loop to re-wait at ready().
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -101,25 +130,30 @@ impl AppBuilder for App {
 
     fn build_app(self) -> picoserve::Router<Self::PathRouter> {
         picoserve::Router::new()
-            .route("/", get(|| async {
-                KEY_CHANNEL.send(KeyEvent::Tap).await;
-                "OK"
-            }))
-            .route("/hold", get(|| async {
-                KEY_CHANNEL.send(KeyEvent::Hold(2000)).await;
-                "OK"
-            }))
+            .route(
+                "/",
+                get(|| async {
+                    KEY_CHANNEL.send(KeyEvent::Tap(SwitchButton::BtnA)).await;
+                    "OK"
+                }),
+            )
+            .route(
+                "/hold",
+                get(|| async {
+                    KEY_CHANNEL
+                        .send(KeyEvent::Hold(SwitchButton::BtnA, 2000))
+                        .await;
+                    "OK"
+                }),
+            )
+            .route("/status", get(|| async { "ONLINE" }))
     }
 }
 
 static APP_CONFIG: picoserve::Config = picoserve::Config::const_default().keep_connection_alive();
 
 #[embassy_executor::task(pool_size = WEB_TASK_POOL_SIZE)]
-async fn web_task(
-    task_id: usize,
-    stack: Stack<'static>,
-    app: &'static AppRouter<App>,
-) -> ! {
+async fn web_task(task_id: usize, stack: Stack<'static>, app: &'static AppRouter<App>) -> ! {
     let mut tcp_rx_buffer = [0; 1024];
     let mut tcp_tx_buffer = [0; 1024];
     let mut http_buffer = [0; 2048];
@@ -138,11 +172,12 @@ async fn main(spawner: Spawner) {
     // ---------- USB HID setup ----------
     let usb_driver = embassy_rp::usb::Driver::new(p.USB, Irqs);
 
-    let mut usb_config = UsbConfig::new(0xc0de, 0xcafe);
-    usb_config.manufacturer = Some("Shiny Hunter");
-    usb_config.product = Some("Controller");
-    usb_config.serial_number = Some("1");
-    usb_config.max_power = 100;
+    // Must match the HORI Pokken Controller identity that the Switch whitelists.
+    let mut usb_config = UsbConfig::new(0x0F0D, 0x0092);
+    usb_config.manufacturer = Some("HORI CO.,LTD.");
+    usb_config.product = Some("POKKEN CONTROLLER");
+    usb_config.serial_number = None;
+    usb_config.max_power = 250;
     usb_config.max_packet_size_0 = 64;
 
     let mut builder = UsbBuilder::new(
@@ -155,19 +190,16 @@ async fn main(spawner: Spawner) {
     );
 
     let hid_config = HidConfig {
-        report_descriptor: usbd_hid::descriptor::KeyboardReport::desc(),
+        report_descriptor: switch_descriptor::DESCRIPTOR,
         request_handler: None,
-        poll_ms: 10,
+        poll_ms: 5,
         max_packet_size: 64,
-        hid_subclass: HidSubclass::Boot,
-        hid_boot_protocol: HidBootProtocol::Keyboard,
+        hid_subclass: HidSubclass::No,
+        hid_boot_protocol: HidBootProtocol::None,
     };
 
-    let hid_writer = HidWriter::<_, 8>::new(
-        &mut builder,
-        USB_STATE.init(HidState::new()),
-        hid_config,
-    );
+    let hid_writer =
+        HidWriter::<_, 8>::new(&mut builder, USB_STATE.init(HidState::new()), hid_config);
 
     let usb = builder.build();
     spawner.spawn(unwrap!(usb_task(usb)));
